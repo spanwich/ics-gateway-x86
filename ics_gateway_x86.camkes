@@ -1,6 +1,8 @@
 /*
  * ICS Bidirectional Cross-Domain Security Gateway - x86_64 Pure CAmkES
  *
+ * v2.300: SYMMETRIC BIDIRECTIONAL VALIDATION (Zero Trust ICS)
+ *
  * ============================================================================
  * TRAFFIC FLOW LEGEND
  * ============================================================================
@@ -9,7 +11,7 @@
  * OUTBOUND = Internal Network -> External Network (PLC -> SCADA)
  *
  * External Network: SCADA systems, HMIs, engineering workstations (untrusted)
- * Internal Network: PLCs, RTUs, field devices (trusted)
+ * Internal Network: PLCs, RTUs, field devices (ALSO UNTRUSTED - Zero Trust)
  *
  * ============================================================================
  * BIDIRECTIONAL ARCHITECTURE
@@ -146,7 +148,10 @@ component ICS_Inbound {
     uses ModbusValidate parser;
 }
 
-/* ICS_Outbound - Validates internal -> external traffic */
+/* ICS_Outbound - Validates internal -> external traffic
+ * v2.300: Symmetric F* response validation (Zero Trust ICS)
+ * Uses IN-PROCESS F* validators - no RPC to ModbusParser needed
+ */
 component ICS_Outbound {
     control;
 
@@ -158,8 +163,7 @@ component ICS_Outbound {
     dataport Buf(ICS_BUFFER_SIZE) out_dp;
     emits Notification out_ntfy;
 
-    /* RPC to isolated ModbusParser */
-    uses ModbusValidate parser;
+    /* v2.300: In-process F* validation - no RPC needed */
 }
 
 /* ModbusParser - Isolated formally verified parser (separate address space) */
@@ -262,10 +266,10 @@ assembly {
             to net1_drv.net0_conn_state
         );
 
-        /* === Parser RPC: ICS_Inbound/ICS_Outbound -> ModbusParser === */
+        /* === Parser RPC: ICS_Inbound -> ModbusParser === */
+        /* Note: ICS_Outbound uses in-process F* validation (v2.300) */
         connection seL4RPCDataport parser_rpc(
             from ics_inbound.parser,
-            from ics_outbound.parser,
             to modbus_parser.parser
         );
     }
@@ -343,6 +347,6 @@ assembly {
 
         /* Per-client shared memory for parser payload transfer */
         ics_inbound.parser_shmem_size = 4096;
-        ics_outbound.parser_shmem_size = 4096;
+        /* ics_outbound uses in-process F* validation (v2.300) - no RPC shmem needed */
     }
 }

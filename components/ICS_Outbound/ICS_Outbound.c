@@ -4,18 +4,22 @@
  * Validates traffic from internal network (VirtIO_Net1_Driver) before
  * forwarding to external network (VirtIO_Net0_Driver).
  *
- * v2.280: MINIMAL COMPONENT
- * =========================
- * - EverParse validation for protocol correctness
- * - No policy enforcement for outbound (PLC responses are trusted)
- * - Policy enforcement happens INBOUND only (ICS_Inbound)
+ * v2.300: SYMMETRIC BIDIRECTIONAL VALIDATION
+ * ==========================================
+ * Implements Zero Trust ICS architecture - internal devices are NOT trusted.
+ * Uses F*-verified response validators to prevent:
+ *   - Data Exfiltration: Limits response data size
+ *   - Address Confusion: Validates echoed addresses in write responses
+ *   - Covert Channels: Strict structure validation
+ *   - Exception Abuse: Validates exception codes
  *
  * Verification Architecture:
- *   - EverParse (F*): Protocol syntax verification for responses
- *   - No policy callbacks needed (responses come from trusted PLC)
+ *   - EverParse (F*): Response structure AND policy verification
+ *   - Symmetric with ICS_Inbound: Both directions use F* validation
+ *   - Response-specific validators: Different structure from requests
  *
  * Stable since v2.240 (2025-11-02)
- * Minimal since v2.280 (2026-01-25)
+ * Symmetric since v2.300 (2026-01-26)
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
@@ -29,6 +33,7 @@
 #include <stdint.h>
 #include "common.h"
 #include "version.h"
+#include "modbus_response_policy_fstar.h"  /* v2.300: F* response validation */
 
 /* Global timestamp counter definition */
 uint64_t global_timestamp_counter = 0;
@@ -41,6 +46,11 @@ static uint64_t tcp_messages = 0;
 static uint64_t udp_messages = 0;
 static uint64_t arp_messages = 0;
 static uint64_t other_messages = 0;
+
+/* Response validation counters (v2.300) */
+static uint64_t data_responses = 0;
+static uint64_t echo_responses = 0;
+static uint64_t exception_responses = 0;
 
 /*
  * Print frame metadata for debugging
@@ -82,6 +92,15 @@ static void print_frame_metadata(const FrameMetadata *meta) {
 
 /*
  * Validate ICS message
+ *
+ * v2.300: SYMMETRIC F*-VERIFIED RESPONSE VALIDATION
+ * =================================================
+ * Uses modbus_validate_response_with_policy() which validates:
+ *   - Data responses: ByteCount <= MaxResponseBytes (exfiltration prevention)
+ *   - Echo responses: Echoed address within policy range
+ *   - Exception responses: Valid exception code
+ *
+ * ZERO TRUST: Internal PLC is NOT assumed to be trustworthy.
  */
 static bool validate_message(const ICS_Message *msg) {
     const FrameMetadata *meta = &msg->metadata;
@@ -99,13 +118,59 @@ static bool validate_message(const ICS_Message *msg) {
         return false;
     }
 
-    /* EverParse validation via isolated ModbusParser component (RPC) */
+    /*
+     * F*-VERIFIED RESPONSE VALIDATION (v2.300):
+     *
+     * Single call validates response structure AND policy using EverParse/F*.
+     * Routes to appropriate validator based on function code:
+     *   - FC 0x01-0x04, 0x17: Data response (MaxResponseBytes check)
+     *   - FC 0x05, 0x06, 0x0F, 0x10: Echo response (address range check)
+     *   - FC | 0x80: Exception response (exception code whitelist)
+     *
+     * SECURITY: Prevents data exfiltration, address confusion, and exception abuse.
+     */
     if (msg->payload_length > 0) {
-        memcpy((void *)parser_get_buf(), msg->payload, msg->payload_length);
-        int parse_result = parser_validate((int)msg->payload_length);
-        if (parse_result != 1) {
-            DEBUG_ERROR("ICS_Outbound: REJECT - Parser validation failed (result=%d)\n", parse_result);
-            return false;
+        uint8_t result = modbus_validate_response_with_policy(msg->payload, msg->payload_length);
+
+        switch (result) {
+            case FSTAR_RESPONSE_OK:
+                /* Passed response validation */
+                /* Track response type for statistics */
+                if (msg->payload_length >= 8) {
+                    uint8_t fc = msg->payload[7];
+                    if (fc & 0x80) {
+                        exception_responses++;
+                    } else if (fc == 0x05 || fc == 0x06 || fc == 0x0F || fc == 0x10) {
+                        echo_responses++;
+                    } else {
+                        data_responses++;
+                    }
+                }
+                break;
+
+            case FSTAR_RESPONSE_SYNTAX_ERROR:
+                DEBUG_ERROR("ICS_Outbound: REJECT - F* response syntax validation failed\n");
+                return false;
+
+            case FSTAR_RESPONSE_POLICY_REJECT:
+                DEBUG_ERROR("ICS_Outbound: REJECT - F* response policy violation\n");
+                return false;
+
+            case FSTAR_RESPONSE_INVALID_FC:
+                DEBUG_ERROR("ICS_Outbound: REJECT - Invalid response FC\n");
+                return false;
+
+            case FSTAR_RESPONSE_TOO_SHORT:
+                DEBUG_ERROR("ICS_Outbound: REJECT - Response too short for F*\n");
+                return false;
+
+            case FSTAR_RESPONSE_INVALID_EXCEPTION:
+                DEBUG_ERROR("ICS_Outbound: REJECT - Invalid exception code\n");
+                return false;
+
+            default:
+                DEBUG_ERROR("ICS_Outbound: REJECT - Unknown F* response result %u\n", result);
+                return false;
         }
     }
 
@@ -189,6 +254,8 @@ void in_ntfy_handle(void) {
                    stats.messages_received, stats.messages_forwarded, stats.messages_dropped);
             DEBUG("TCP: %llu, UDP: %llu, ARP: %llu, Other: %llu\n",
                    tcp_messages, udp_messages, arp_messages, other_messages);
+            DEBUG("Responses - Data: %llu, Echo: %llu, Exception: %llu\n",
+                   data_responses, echo_responses, exception_responses);
             DEBUG("===============================\n\n");
         }
     }
@@ -200,11 +267,32 @@ void in_ntfy_handle(void) {
 void pre_init(void) {
     memset(&stats, 0, sizeof(stats));
     tcp_messages = udp_messages = arp_messages = other_messages = 0;
-    DEBUG_INFO("%s (%s) - Minimal internal→external validation (no policy)\n", ICS_OUTBOUND_VERSION, ICS_VERSION_DATE);
+    data_responses = echo_responses = exception_responses = 0;
+
+    /*
+     * Initialize Modbus response policy (v2.300)
+     *
+     * SYMMETRIC VALIDATION:
+     * Response policy should match request policy for consistency.
+     * Uses same address ranges as ICS_Inbound for echo validation.
+     *
+     * CVE-2022-0367 TEST CONFIGURATION:
+     * - MaxResponseBytes: 250 (protocol max)
+     * - Holding registers: 100-109 (matches inbound policy)
+     *
+     * For production, synchronize with ICS_Inbound policy configuration.
+     */
+    fstar_response_policy_init_cve_test();
+
+    DEBUG_INFO("%s (%s) - Symmetric F* response validation (Zero Trust)\n",
+               ICS_OUTBOUND_VERSION, ICS_VERSION_DATE);
+    DEBUG_INFO("Response Policy: max_bytes=%u, holding_reg=%u-%u (F* verified)\n",
+               g_response_max_bytes,
+               g_response_holding_reg_start, g_response_holding_reg_end);
 }
 
 int run(void) {
-    DEBUG_INFO("ICS_Outbound: Ready to validate internal→external traffic\n");
+    DEBUG_INFO("ICS_Outbound: Ready to validate internal→external traffic (symmetric)\n");
 
     /* Main event loop */
     while (1) {
