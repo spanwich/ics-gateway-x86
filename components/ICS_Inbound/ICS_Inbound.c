@@ -107,11 +107,23 @@ static bool validate_message(const ICS_Message *msg) {
         return false;
     }
 
-    /* EverParse validation hook */
+    /* EverParse validation via isolated ModbusParser component (RPC) */
     if (msg->payload_length > 0) {
-        if (!everparse_validate(msg->payload, msg->payload_length)) {
-            DEBUG_ERROR("ICS_Inbound: REJECT - EverParse validation failed\n");
+        memcpy((void *)parser_get_buf(), msg->payload, msg->payload_length);
+        int parse_result = parser_validate((int)msg->payload_length);
+        if (parse_result != 1) {
+            DEBUG_ERROR("ICS_Inbound: REJECT - Parser validation failed (result=%d)\n", parse_result);
             return false;
+        }
+
+        /* Stage 2: Policy enforcement (stays in this component) */
+        if (g_policy_enabled) {
+            policy_error_t error = {0};
+            if (!modbus_policy_validate_request(msg->payload, (uint16_t)msg->payload_length,
+                                                 &g_modbus_policy, &error)) {
+                DEBUG_ERROR("ICS_Inbound: REJECT - Policy violation\n");
+                return false;
+            }
         }
     }
 

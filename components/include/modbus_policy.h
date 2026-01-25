@@ -13,6 +13,14 @@
  *   1. First validate with EverParse (protocol correctness)
  *   2. Then validate with policy layer (address ranges)
  *
+ * FORMAL VERIFICATION STATUS:
+ * - policy_check_range: Annotated with Frama-C/ACSL for overflow-free arithmetic
+ * - modbus_policy_validate_request: Annotated with buffer validity contracts
+ *
+ * To verify with Frama-C:
+ *   frama-c -wp -wp-rte modbus_policy.h \
+ *     -cpp-extra-args="-DFRAMA_C_VERIFICATION"
+ *
  * Author: Ford (Saranachon) Iammongkol
  * Date: 2026-01-06
  */
@@ -50,6 +58,34 @@ typedef struct {
     uint16_t discrete_input_start;
     uint16_t discrete_input_end;
 } modbus_policy_t;
+
+/*
+ * =============================================================================
+ * FRAMA-C/ACSL LOGIC DEFINITIONS
+ * =============================================================================
+ *
+ * Note: These predicates are defined after modbus_policy_t to ensure
+ * the type is available for the valid_policy predicate.
+ */
+#ifdef FRAMA_C_VERIFICATION
+/*@
+  // Predicate: address range [addr, addr+qty-1] is within [start, end]
+  // Overflow-safe: uses subtraction instead of addition
+  predicate valid_address_range(uint16_t addr, uint16_t qty,
+                                uint16_t start, uint16_t end) =
+    addr >= start &&
+    addr <= end &&
+    (qty == 0 || (qty - 1) <= (end - addr));
+
+  // Predicate: policy structure is properly initialized with valid ranges
+  predicate valid_policy(modbus_policy_t *p) =
+    \valid_read(p) &&
+    p->holding_reg_start <= p->holding_reg_end &&
+    p->input_reg_start <= p->input_reg_end &&
+    p->coil_start <= p->coil_end &&
+    p->discrete_input_start <= p->discrete_input_end;
+*/
+#endif
 
 /*
  * Policy Validation Result
@@ -115,7 +151,47 @@ static inline void modbus_policy_init_cve_test(modbus_policy_t *policy) {
 /*
  * Validate a single address range
  * Returns true if valid, false if out of policy
+ *
+ * CVE-2022-0367 Critical Function:
+ * This function prevents out-of-bounds memory access by validating
+ * that address ranges fall within configured limits.
  */
+/*@
+  requires allowed_start <= allowed_end;
+  requires error == \null || \valid(error);
+
+  assigns error->result, error->actual_address, error->actual_quantity,
+          error->allowed_start, error->allowed_end
+          \when error != \null;
+
+  behavior valid_range:
+    assumes address >= allowed_start;
+    assumes address <= allowed_end;
+    assumes quantity == 0 || (quantity - 1) <= (allowed_end - address);
+    ensures \result == true;
+
+  behavior address_too_low:
+    assumes address < allowed_start;
+    ensures \result == false;
+    ensures error != \null ==> error->result == POLICY_ERR_ADDRESS_TOO_LOW;
+
+  behavior address_too_high:
+    assumes address >= allowed_start;
+    assumes address > allowed_end;
+    ensures \result == false;
+    ensures error != \null ==> error->result == POLICY_ERR_ADDRESS_TOO_HIGH;
+
+  behavior range_overflow:
+    assumes address >= allowed_start;
+    assumes address <= allowed_end;
+    assumes quantity > 0;
+    assumes (quantity - 1) > (allowed_end - address);
+    ensures \result == false;
+    ensures error != \null ==> error->result == POLICY_ERR_RANGE_OVERFLOW;
+
+  complete behaviors;
+  disjoint behaviors;
+*/
 static inline bool policy_check_range(
     uint16_t address,
     uint16_t quantity,
@@ -187,6 +263,10 @@ static inline uint16_t policy_read_be16(const uint8_t *buf) {
  * This function should be called AFTER EverParse validation passes.
  * EverParse ensures protocol correctness; this ensures policy compliance.
  *
+ * CVE-2022-0367 CRITICAL:
+ * This function validates BOTH read_address AND write_address in FC 0x17.
+ * The libmodbus vulnerability was that it only validated read_address.
+ *
  * Parameters:
  *   packet     - Modbus TCP packet (starting from MBAP header)
  *   packet_len - Total packet length
@@ -196,6 +276,37 @@ static inline uint16_t policy_read_be16(const uint8_t *buf) {
  * Returns:
  *   true if packet complies with policy, false otherwise
  */
+/*@
+  requires \valid_read(packet + (0..packet_len-1));
+  requires \valid_read(policy);
+  requires policy->holding_reg_start <= policy->holding_reg_end;
+  requires policy->input_reg_start <= policy->input_reg_end;
+  requires policy->coil_start <= policy->coil_end;
+  requires policy->discrete_input_start <= policy->discrete_input_end;
+  requires error == \null || \valid(error);
+
+  assigns error->result, error->function_code, error->field_name,
+          error->actual_address, error->actual_quantity,
+          error->allowed_start, error->allowed_end
+          \when error != \null;
+
+  behavior packet_too_short:
+    assumes packet_len < MBAP_DATA_START;
+    ensures \result == false;
+
+  behavior fc_0x17_validates_both_ranges:
+    assumes packet_len >= MBAP_DATA_START + 8;
+    assumes packet[MBAP_FUNCTION_CODE] == 0x17;
+    ensures \result == true ==>
+      valid_address_range(
+        policy_read_be16(&packet[MBAP_DATA_START]),      // read_addr
+        policy_read_be16(&packet[MBAP_DATA_START + 2]),  // read_qty
+        policy->holding_reg_start, policy->holding_reg_end) &&
+      valid_address_range(
+        policy_read_be16(&packet[MBAP_DATA_START + 4]),  // write_addr
+        policy_read_be16(&packet[MBAP_DATA_START + 6]),  // write_qty
+        policy->holding_reg_start, policy->holding_reg_end);
+*/
 static inline bool modbus_policy_validate_request(
     const uint8_t *packet,
     uint16_t packet_len,
@@ -314,12 +425,17 @@ static inline bool modbus_policy_validate_request(
          * CVE-2022-0367 MITIGATION:
          * This function code requires validating BOTH read AND write addresses.
          * The libmodbus vulnerability was that it only validated the read address.
+         *
+         * FORMAL VERIFICATION GOAL:
+         * Prove that both read_addr and write_addr are validated before return true.
          * =================================================================== */
         case 0x17: {  /* Read/Write Multiple Registers */
             uint16_t read_addr = policy_read_be16(&packet[MBAP_DATA_START]);
             uint16_t read_qty = policy_read_be16(&packet[MBAP_DATA_START + 2]);
             uint16_t write_addr = policy_read_be16(&packet[MBAP_DATA_START + 4]);
             uint16_t write_qty = policy_read_be16(&packet[MBAP_DATA_START + 6]);
+
+            /*@ assert \valid_read(&packet[MBAP_DATA_START + 7]); */
 
             /* Validate READ address range */
             if (error) error->field_name = "read_address";
@@ -328,15 +444,27 @@ static inline bool modbus_policy_validate_request(
                                     policy->holding_reg_end, error)) {
                 return false;
             }
+            /*@ assert valid_address_range(read_addr, read_qty,
+                         policy->holding_reg_start, policy->holding_reg_end); */
 
-            /* Validate WRITE address range - CVE-2022-0367 FIX */
+            /* Validate WRITE address range - CVE-2022-0367 FIX
+             * CRITICAL: Without this check, an attacker could specify a valid
+             * read_addr but malicious write_addr to corrupt arbitrary memory.
+             */
             if (error) error->field_name = "write_address";
             if (!policy_check_range(write_addr, write_qty,
                                     policy->holding_reg_start,
                                     policy->holding_reg_end, error)) {
                 return false;
             }
+            /*@ assert valid_address_range(write_addr, write_qty,
+                         policy->holding_reg_start, policy->holding_reg_end); */
 
+            /*@ assert valid_address_range(read_addr, read_qty,
+                         policy->holding_reg_start, policy->holding_reg_end) &&
+                       valid_address_range(write_addr, write_qty,
+                         policy->holding_reg_start, policy->holding_reg_end);
+            */
             return true;
         }
 

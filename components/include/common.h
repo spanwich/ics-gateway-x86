@@ -215,26 +215,6 @@ static inline bool basic_bounds_check(const ICS_Message* msg, size_t available_b
 }
 
 /*
- * EverParse validation function - Formally Verified Modbus TCP Parser (v3)
- *
- * Integrates EverParse-generated parser with mathematical guarantees:
- * - Memory Safety: No buffer overflows possible
- * - Arithmetic Safety: No integer overflow/underflow
- * - Functional Correctness: Accepts exactly valid Modbus TCP messages
- * - Cross-field Validation: ByteCount vs Quantity enforced
- * - Trailing Byte Detection: Rejects packets with extra bytes (v3 security fix)
- *
- * v3 CRITICAL SECURITY FIX:
- * The parser now validates that InputLength == (MBAP.Length + 6), preventing:
- * - CVE-2019-14462 pattern (Length under-declaration → buffer overflow)
- * - Trailing garbage injection attacks
- * - Buffer content smuggling
- *
- * For implementation details, see ModbusTCP_v3_SimpleWrapper.h
- */
-#include "ModbusTCP_v3_SimpleWrapper.h"
-
-/*
  * Policy Enforcement Layer - Runtime Address Validation (v2.270)
  *
  * CVE-2022-0367 MITIGATION:
@@ -242,8 +222,8 @@ static inline bool basic_bounds_check(const ICS_Message* msg, size_t available_b
  * but not write_address in FC 0x17. This policy layer validates BOTH.
  *
  * Architecture:
- *   Stage 1: EverParse validates protocol correctness (formally verified)
- *   Stage 2: Policy layer validates address ranges (runtime configurable)
+ *   Stage 1: EverParse validates protocol correctness (isolated ModbusParser component)
+ *   Stage 2: Policy layer validates address ranges (runtime configurable, in ICS_Inbound)
  *
  * For implementation details, see modbus_policy.h
  */
@@ -252,51 +232,6 @@ static inline bool basic_bounds_check(const ICS_Message* msg, size_t available_b
 /* Global policy configuration - initialized in pre_init() */
 extern modbus_policy_t g_modbus_policy;
 extern bool g_policy_enabled;
-
-static inline bool everparse_validate(const uint8_t* payload, size_t length) {
-    /* Guard against size_t to uint32_t conversion overflow */
-    if (length > UINT32_MAX) {
-        return false;
-    }
-
-    /*
-     * STAGE 1: EverParse Protocol Validation (Formally Verified)
-     *
-     * Use v3 Modbus TCP frame validator with trailing byte detection
-     * Validates: MBAP header, Protocol ID (0x0000), Length field (2-254),
-     *           Function Code (1-127), overall frame structure,
-     *           AND InputLength == (MBAP.Length + 6) to detect trailing garbage
-     *
-     * Parameters:
-     *   - InputLength: Actual TCP payload size (passed to detect trailing bytes)
-     *   - base: Pointer to payload buffer
-     *   - len: Buffer length (same as InputLength for validation)
-     */
-    uint32_t input_length = (uint32_t)length;
-    if (!ModbusTcpV3SimpleCheckModbusTcpFrameV3(input_length, (uint8_t*)payload, input_length)) {
-        return false;
-    }
-
-    /*
-     * STAGE 2: Policy Enforcement (Runtime Configurable)
-     *
-     * CVE-2022-0367 mitigation: Validates that ALL addresses (including
-     * write_address in FC 0x17) are within configured policy range.
-     *
-     * This catches attacks where protocol is valid but addresses target
-     * memory outside the PLC's configured register mapping.
-     */
-    if (g_policy_enabled) {
-        policy_error_t error = {0};
-        if (!modbus_policy_validate_request(payload, (uint16_t)length, &g_modbus_policy, &error)) {
-            /* Policy violation - log details for security audit */
-            /* Note: Actual logging done in ICS_Inbound.c to use debug_levels.h */
-            return false;
-        }
-    }
-
-    return true;
-}
 
 /*
  * v2.208: ALL LOGGING MACROS MOVED TO debug_levels.h

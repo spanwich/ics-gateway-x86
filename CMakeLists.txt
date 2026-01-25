@@ -84,11 +84,30 @@ DeclareCAmkESComponent(
 )
 
 # ICS_Inbound Component (External -> Internal validation)
-# EverParse v3 parser with trailing byte attack detection
+# Policy enforcement stays here; EverParse moved to isolated ModbusParser
 DeclareCAmkESComponent(
     ICS_Inbound
     SOURCES
         components/ICS_Inbound/ICS_Inbound.c
+    INCLUDES
+        components/include
+)
+
+# ICS_Outbound Component (Internal -> External validation)
+# EverParse validation via isolated ModbusParser RPC
+DeclareCAmkESComponent(
+    ICS_Outbound
+    SOURCES
+        components/ICS_Outbound/ICS_Outbound.c
+    INCLUDES
+        components/include
+)
+
+# ModbusParser Component (Isolated EverParse validator - separate address space)
+DeclareCAmkESComponent(
+    ModbusParser
+    SOURCES
+        components/ModbusParser/ModbusParser.c
         components/include/ModbusTCP_v3_Simple.c
         components/include/ModbusTCP_v3_SimpleWrapper.c
         components/lib/everparse_error_handler.c
@@ -96,18 +115,7 @@ DeclareCAmkESComponent(
         components/include
 )
 
-# ICS_Outbound Component (Internal -> External validation)
-# EverParse v3 parser with trailing byte attack detection
-DeclareCAmkESComponent(
-    ICS_Outbound
-    SOURCES
-        components/ICS_Outbound/ICS_Outbound.c
-        components/include/ModbusTCP_v3_Simple.c
-        components/include/ModbusTCP_v3_SimpleWrapper.c
-        components/lib/everparse_error_handler.c
-    INCLUDES
-        components/include
-)
+CAmkESAddImportPath(components/interfaces)
 
 # Declare root server
 DeclareCAmkESRootserver(ics_gateway_x86.camkes)
