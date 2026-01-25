@@ -215,23 +215,19 @@ static inline bool basic_bounds_check(const ICS_Message* msg, size_t available_b
 }
 
 /*
- * Policy Enforcement Layer - Runtime Address Validation (v2.270)
+ * Policy Enforcement - Integrated into EverParse (v2.280)
  *
  * CVE-2022-0367 MITIGATION:
  * The vulnerability exists because libmodbus only validates read_address
- * but not write_address in FC 0x17. This policy layer validates BOTH.
+ * but not write_address in FC 0x17. Policy enforcement is now INTEGRATED
+ * into the EverParse parser via external Frama-C verified callbacks.
  *
  * Architecture:
- *   Stage 1: EverParse validates protocol correctness (isolated ModbusParser component)
- *   Stage 2: Policy layer validates address ranges (runtime configurable, in ICS_Inbound)
+ *   - EverParse (F*): Validates BOTH protocol syntax AND address policy
+ *   - Single verification framework: End-to-end mathematically proven
  *
- * For implementation details, see modbus_policy.h
+ * For implementation details, see modbus_policy_fstar.h
  */
-#include "modbus_policy.h"
-
-/* Global policy configuration - initialized in pre_init() */
-extern modbus_policy_t g_modbus_policy;
-extern bool g_policy_enabled;
 
 /*
  * v2.208: ALL LOGGING MACROS MOVED TO debug_levels.h

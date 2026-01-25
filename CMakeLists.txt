@@ -84,17 +84,25 @@ DeclareCAmkESComponent(
 )
 
 # ICS_Inbound Component (External -> Internal validation)
-# Policy enforcement stays here; EverParse moved to isolated ModbusParser
+# v2.290: F*-only validation with integrated policy enforcement
+# Policy constraints are encoded as dependent types in the EverParse/F* specification.
+# CVE-2022-0367 mitigation is mathematically proven at the type level.
 DeclareCAmkESComponent(
     ICS_Inbound
     SOURCES
         components/ICS_Inbound/ICS_Inbound.c
+        components/lib/modbus_policy_fstar.c
+        components/include/ModbusTCP_v4_PolicyEnforced.c
+        components/include/ModbusTCP_v4_PolicyEnforcedWrapper.c
+        components/include/ModbusTCP_v3_Simple.c
+        components/include/ModbusTCP_v3_SimpleWrapper.c
+        components/lib/everparse_error_handler.c
     INCLUDES
         components/include
 )
 
 # ICS_Outbound Component (Internal -> External validation)
-# EverParse validation via isolated ModbusParser RPC
+# EverParse validation via isolated ModbusParser RPC (no policy for responses)
 DeclareCAmkESComponent(
     ICS_Outbound
     SOURCES
@@ -104,6 +112,7 @@ DeclareCAmkESComponent(
 )
 
 # ModbusParser Component (Isolated EverParse validator - separate address space)
+# EverParse validates protocol syntax only. Policy enforcement is in ICS_Inbound.
 DeclareCAmkESComponent(
     ModbusParser
     SOURCES

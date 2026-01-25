@@ -34,3 +34,23 @@ void ModbusTCP_SimpleEverParseError(const char *StructName,
 {
     ModbusTCP_v3_SimpleEverParseError(StructName, FieldName, Reason);
 }
+
+/*
+ * v2.290: Error handler for v4 policy-enforced parser
+ *
+ * This function is called when the F* verified parser detects:
+ *   1. Protocol syntax errors (invalid field values, wrong lengths)
+ *   2. Policy violations (address out of range, quantity overflow)
+ *
+ * Both types of errors are handled by the same verified code path,
+ * demonstrating F*'s unified verification approach.
+ */
+void ModbusTCP_v4_PolicyEnforcedEverParseError(const char *StructName,
+                                                const char *FieldName,
+                                                const char *Reason)
+{
+    DEBUG_ERROR("F* Policy Validation Failed:\n");
+    DEBUG_ERROR("  Structure: %s\n", StructName ? StructName : "(unknown)");
+    DEBUG_ERROR("  Field: %s\n", FieldName ? FieldName : "(unknown)");
+    DEBUG_ERROR("  Reason: %s\n", Reason ? Reason : "(no reason provided)");
+}

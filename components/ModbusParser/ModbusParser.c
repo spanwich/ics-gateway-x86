@@ -3,6 +3,13 @@
  *
  * UNIFIED VERSION: Works for both production (CAmkES) and verification (Frama-C)
  *
+ * This component validates Modbus TCP protocol SYNTAX using EverParse (F* verified).
+ * Address policy enforcement is done in ICS_Inbound using Frama-C verified callbacks.
+ *
+ * Verification Architecture:
+ *   - This component (EverParse/F*): Protocol syntax verification
+ *   - ICS_Inbound (Frama-C): Address policy verification (CVE-2022-0367)
+ *
  * Production build:
  *   Compiled by CAmkES build system (no special flags)
  *
@@ -124,7 +131,8 @@ int parser_validate(int payload_length) {
 #ifdef FRAMA_C_VERIFICATION
     uint8_t *buf = parser_buf(badge);
 #else
-    uint8_t *buf = (uint8_t *)parser_get_buf();
+    /* CAmkES generates parser_buf(badge) for seL4RPCDataport connections */
+    uint8_t *buf = (uint8_t *)parser_buf(badge);
 #endif
 
     /* Step 3: Null check */

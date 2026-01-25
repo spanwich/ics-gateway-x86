@@ -4,10 +4,18 @@
  * Validates traffic from internal network (VirtIO_Net1_Driver) before
  * forwarding to external network (VirtIO_Net0_Driver).
  *
- * Current: Pass-through with metadata forwarding and error queue propagation
- * Future: Add policy rules, EverParse validation, rate limiting
+ * v2.280: MINIMAL COMPONENT
+ * =========================
+ * - EverParse validation for protocol correctness
+ * - No policy enforcement for outbound (PLC responses are trusted)
+ * - Policy enforcement happens INBOUND only (ICS_Inbound)
+ *
+ * Verification Architecture:
+ *   - EverParse (F*): Protocol syntax verification for responses
+ *   - No policy callbacks needed (responses come from trusted PLC)
  *
  * Stable since v2.240 (2025-11-02)
+ * Minimal since v2.280 (2026-01-25)
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
@@ -20,20 +28,10 @@
 #include <string.h>
 #include <stdint.h>
 #include "common.h"
-#include "version.h"  /* v2.241: Unified version management */
+#include "version.h"
 
 /* Global timestamp counter definition */
 uint64_t global_timestamp_counter = 0;
-
-/*
- * Policy Enforcement Configuration (v2.270)
- *
- * For OUTBOUND (PLC → SCADA responses), we typically don't enforce
- * address policy since responses come from the trusted PLC.
- * Policy enforcement is primarily for INBOUND requests to protect the PLC.
- */
-modbus_policy_t g_modbus_policy;
-bool g_policy_enabled = false;  /* Disabled for outbound - responses don't need policy */
 
 /* Component statistics */
 static ComponentStats stats;
@@ -202,7 +200,7 @@ void in_ntfy_handle(void) {
 void pre_init(void) {
     memset(&stats, 0, sizeof(stats));
     tcp_messages = udp_messages = arp_messages = other_messages = 0;
-    DEBUG_INFO("%s (%s) - Stable internal→external validation\n", ICS_OUTBOUND_VERSION, ICS_VERSION_DATE);
+    DEBUG_INFO("%s (%s) - Minimal internal→external validation (no policy)\n", ICS_OUTBOUND_VERSION, ICS_VERSION_DATE);
 }
 
 int run(void) {

@@ -27,6 +27,21 @@ void ModbusTCP_SimpleEverParseError(const char *StructName,
                                      const char *FieldName,
                                      const char *Reason);
 
+/*
+ * Error handler for v3 simple parser
+ */
+void ModbusTCP_v3_SimpleEverParseError(const char *StructName,
+                                        const char *FieldName,
+                                        const char *Reason);
+
+/*
+ * Error handler for v4 policy-enforced parser
+ * Called when the F* verified parser detects syntax errors OR policy violations
+ */
+void ModbusTCP_v4_PolicyEnforcedEverParseError(const char *StructName,
+                                                const char *FieldName,
+                                                const char *Reason);
+
 #ifdef __cplusplus
 }
 #endif
