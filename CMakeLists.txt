@@ -83,38 +83,79 @@ DeclareCAmkESComponent(
         ethdrivers
 )
 
+# Option to use verified glue code (F*-extracted)
+option(USE_VERIFIED_GLUE "Use F*-verified glue code for ICS components" OFF)
+
 # ICS_Inbound Component (External -> Internal validation)
 # v2.290: F*-only validation with integrated policy enforcement
 # Policy constraints are encoded as dependent types in the EverParse/F* specification.
 # CVE-2022-0367 mitigation is mathematically proven at the type level.
-DeclareCAmkESComponent(
-    ICS_Inbound
-    SOURCES
-        components/ICS_Inbound/ICS_Inbound.c
-        components/lib/modbus_policy_fstar.c
-        components/include/ModbusTCP_v4_PolicyEnforced.c
-        components/include/ModbusTCP_v4_PolicyEnforcedWrapper.c
-        components/include/ModbusTCP_v3_Simple.c
-        components/include/ModbusTCP_v3_SimpleWrapper.c
-        components/lib/everparse_error_handler.c
-    INCLUDES
-        components/include
-)
+if(USE_VERIFIED_GLUE)
+    # VERIFIED VERSION: Minimal component with F*-extracted glue code
+    # Security property: forwarded ==> validated (mathematically proven)
+    DeclareCAmkESComponent(
+        ICS_Inbound
+        SOURCES
+            components/ICS_Inbound/ICS_Inbound_verified.c
+            components/include/ICS_Glue_Inbound.c
+            components/lib/modbus_policy_fstar.c
+            components/include/ModbusTCP_v4_PolicyEnforced.c
+            components/include/ModbusTCP_v4_PolicyEnforcedWrapper.c
+            components/include/ModbusTCP_v3_Simple.c
+            components/include/ModbusTCP_v3_SimpleWrapper.c
+            components/lib/everparse_error_handler.c
+        INCLUDES
+            components/include
+    )
+else()
+    # ORIGINAL VERSION: Full component with logging/statistics
+    DeclareCAmkESComponent(
+        ICS_Inbound
+        SOURCES
+            components/ICS_Inbound/ICS_Inbound.c
+            components/lib/modbus_policy_fstar.c
+            components/include/ModbusTCP_v4_PolicyEnforced.c
+            components/include/ModbusTCP_v4_PolicyEnforcedWrapper.c
+            components/include/ModbusTCP_v3_Simple.c
+            components/include/ModbusTCP_v3_SimpleWrapper.c
+            components/lib/everparse_error_handler.c
+        INCLUDES
+            components/include
+    )
+endif()
 
 # ICS_Outbound Component (Internal -> External validation)
 # v2.300: Symmetric F*-verified response validation (Zero Trust ICS)
 # Response validators prevent data exfiltration, address confusion, and exception abuse.
-DeclareCAmkESComponent(
-    ICS_Outbound
-    SOURCES
-        components/ICS_Outbound/ICS_Outbound.c
-        components/lib/modbus_response_policy_fstar.c
-        components/include/ModbusTCP_v5_ResponsePolicy.c
-        components/include/ModbusTCP_v5_ResponsePolicyWrapper.c
-        components/lib/everparse_error_handler.c
-    INCLUDES
-        components/include
-)
+if(USE_VERIFIED_GLUE)
+    # VERIFIED VERSION: Minimal component with F*-extracted glue code
+    # Security property: forwarded ==> validated (mathematically proven)
+    DeclareCAmkESComponent(
+        ICS_Outbound
+        SOURCES
+            components/ICS_Outbound/ICS_Outbound_verified.c
+            components/include/ICS_Glue_Outbound.c
+            components/lib/modbus_response_policy_fstar.c
+            components/include/ModbusTCP_v5_ResponsePolicy.c
+            components/include/ModbusTCP_v5_ResponsePolicyWrapper.c
+            components/lib/everparse_error_handler.c
+        INCLUDES
+            components/include
+    )
+else()
+    # ORIGINAL VERSION: Full component with logging/statistics
+    DeclareCAmkESComponent(
+        ICS_Outbound
+        SOURCES
+            components/ICS_Outbound/ICS_Outbound.c
+            components/lib/modbus_response_policy_fstar.c
+            components/include/ModbusTCP_v5_ResponsePolicy.c
+            components/include/ModbusTCP_v5_ResponsePolicyWrapper.c
+            components/lib/everparse_error_handler.c
+        INCLUDES
+            components/include
+    )
+endif()
 
 # ModbusParser Component (Isolated EverParse validator - separate address space)
 # EverParse validates protocol syntax only. Policy enforcement is in ICS_Inbound.

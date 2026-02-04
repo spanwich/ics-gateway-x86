@@ -54,3 +54,20 @@ void ModbusTCP_v4_PolicyEnforcedEverParseError(const char *StructName,
     DEBUG_ERROR("  Field: %s\n", FieldName ? FieldName : "(unknown)");
     DEBUG_ERROR("  Reason: %s\n", Reason ? Reason : "(no reason provided)");
 }
+
+/*
+ * v2.300: Error handler for v5 response policy parser
+ *
+ * This function is called when the F* verified response validator detects:
+ *   1. Response syntax errors
+ *   2. Response policy violations (exfiltration, address confusion, etc.)
+ */
+void ModbusTCP_v5_ResponsePolicyEverParseError(const char *StructName,
+                                                 const char *FieldName,
+                                                 const char *Reason)
+{
+    DEBUG_ERROR("F* Response Policy Validation Failed:\n");
+    DEBUG_ERROR("  Structure: %s\n", StructName ? StructName : "(unknown)");
+    DEBUG_ERROR("  Field: %s\n", FieldName ? FieldName : "(unknown)");
+    DEBUG_ERROR("  Reason: %s\n", Reason ? Reason : "(no reason provided)");
+}
